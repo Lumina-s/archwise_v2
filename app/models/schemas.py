@@ -120,3 +120,34 @@ class EmbeddingRequest(BaseModel):
 
 class EmbeddingResponse(BaseModel):
     vectors: list[list[float]]
+
+
+class CaseRetrievalRequest(BaseModel):
+    requirement: str
+    features: ExtractedFeatures
+    top_k: int = Field(default=3, ge=1, le=12)
+
+
+class CandidateCaseCaptureRequest(BaseModel):
+    requirement: str
+    features: ExtractedFeatures
+    candidates: list[CandidateEvaluation]
+
+
+class TopologyKnowledgeRequest(BaseModel):
+    requirement: str
+    features: ExtractedFeatures
+
+
+class TopologyNormalizeRequest(BaseModel):
+    patch: dict[str, Any]
+    requirement: str
+    features: ExtractedFeatures
+    graph_knowledge: dict[str, Any] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+
+
+class TopologyMergeRequest(BaseModel):
+    requirement: str
+    features: ExtractedFeatures
+    patch: dict[str, Any]

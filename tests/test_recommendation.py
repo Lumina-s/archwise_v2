@@ -1,14 +1,17 @@
 import asyncio
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.models.schemas import CandidateEvaluation, ExtractedFeatures
+from app.knowledge_main import app as knowledge_app
+from app.models.schemas import CandidateEvaluation, CaseRecord, ExtractedFeatures
+from app.reasoning_main import app as reasoning_app
 from app.services.exceptions import RequirementParsingError
 from app.services.recommendation_service import RecommendationService
 
 
-client = TestClient(app)
+client = TestClient(reasoning_app)
+knowledge_client = TestClient(knowledge_app)
 
 
 def llm_features(
@@ -106,7 +109,27 @@ def patch_llm(monkeypatch, features: ExtractedFeatures | None = None) -> None:
         }
 
     async def fake_embed_texts(self, texts):
-        return [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] for _ in texts]
+        return [[1.0, *([0.0] * 1023)] for _ in texts]
+
+    async def fake_retrieve_trusted_cases(self, requirement, extracted_features, top_k=3):
+        return []
+
+    async def fake_capture_candidate_case(self, requirement, extracted_features, candidates):
+        now = datetime.now(UTC).isoformat()
+        return CaseRecord(
+            id="runtime-test-case",
+            title="runtime-test-case",
+            requirement=requirement,
+            abstract_features="test",
+            expected_styles=[],
+            recommended_styles=[candidate.style_id for candidate in candidates],
+            notes="test",
+            status="candidate",
+            source="runtime",
+            confidence=0.5,
+            created_at=now,
+            updated_at=now,
+        )
 
     monkeypatch.setattr("app.services.llm_client.LLMClient.extract_features", fake_extract_features)
     monkeypatch.setattr("app.services.llm_client.LLMClient.recommend_architectures", fake_recommend_architectures)
@@ -117,6 +140,14 @@ def patch_llm(monkeypatch, features: ExtractedFeatures | None = None) -> None:
     monkeypatch.setattr("app.services.llm_client.LLMClient.review_topology_coverage_gap", fake_review_topology_coverage_gap)
     monkeypatch.setattr("app.services.llm_client.LLMClient.propose_topology_knowledge_patch", fake_propose_patch)
     monkeypatch.setattr("app.services.llm_client.LLMClient.embed_texts", fake_embed_texts)
+    monkeypatch.setattr(
+        "app.services.case_memory.CaseMemoryService.retrieve_trusted_cases",
+        fake_retrieve_trusted_cases,
+    )
+    monkeypatch.setattr(
+        "app.services.case_memory.CaseMemoryService.capture_candidate_case",
+        fake_capture_candidate_case,
+    )
 
 
 def test_recommend_im_returns_at_least_three_candidates(monkeypatch):
@@ -142,21 +173,24 @@ def test_recommend_im_returns_at_least_three_candidates(monkeypatch):
 
 def test_runtime_candidate_case_can_be_trusted(monkeypatch):
     patch_llm(monkeypatch)
-    response = client.post(
-        "/api/recommend",
+    create_response = knowledge_client.post(
+        "/api/knowledge/cases",
         json={
+            "title": "runtime trust test",
             "requirement": "开发跨平台即时通讯系统，支持万人在线，消息实时可靠，后续扩展视频通话",
-            "top_k": 3,
+            "expected_styles": ["event_driven"],
+            "notes": "test",
+            "as_trusted": False,
         },
     )
-    assert response.status_code == 200
-    case_id = response.json()["decision_trace"]["case_memory_evidence"]["captured_candidate_case_id"]
+    assert create_response.status_code == 200
+    case_id = create_response.json()["id"]
 
-    trust_response = client.post("/api/knowledge/cases/trust", json={"case_id": case_id})
+    trust_response = knowledge_client.post("/api/knowledge/cases/trust", json={"case_id": case_id})
     assert trust_response.status_code == 200
     assert trust_response.json()["status"] == "trusted"
 
-    cases_response = client.get("/api/cases")
+    cases_response = knowledge_client.get("/api/cases")
     assert cases_response.status_code == 200
     records = cases_response.json()
     assert any(item["id"] == case_id and item["status"] == "trusted" for item in records)
@@ -180,13 +214,13 @@ def test_recommend_returns_prompt_when_deepseek_parse_unavailable(monkeypatch):
 
 
 def test_styles_include_required_knowledge_base_size():
-    response = client.get("/api/styles")
+    response = knowledge_client.get("/api/styles")
     assert response.status_code == 200
     assert len(response.json()) >= 10
 
 
 def test_knowledge_graph_has_nodes_and_edges():
-    response = client.get("/api/knowledge/graph")
+    response = knowledge_client.get("/api/knowledge/graph")
     assert response.status_code == 200
     payload = response.json()
     assert payload["nodes"]
@@ -194,7 +228,7 @@ def test_knowledge_graph_has_nodes_and_edges():
 
 
 def test_neo4j_status_endpoint_is_available():
-    response = client.get("/api/knowledge/neo4j/status")
+    response = knowledge_client.get("/api/knowledge/neo4j/status")
     assert response.status_code == 200
     payload = response.json()
     assert "configured" in payload

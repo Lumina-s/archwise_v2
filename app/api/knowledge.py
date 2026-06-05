@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.models.schemas import CaseRequest, CaseTrustRequest, KnowledgeStyleRequest, ManualCaseRequest
+from app.models.schemas import (
+    CandidateCaseCaptureRequest,
+    CaseRequest,
+    CaseRetrievalRequest,
+    CaseTrustRequest,
+    KnowledgeStyleRequest,
+    ManualCaseRequest,
+    TopologyKnowledgeRequest,
+    TopologyMergeRequest,
+    TopologyNormalizeRequest,
+)
 from app.services.knowledge_service import KnowledgeService
 
 
@@ -74,5 +84,39 @@ def build_knowledge_router(knowledge_service: KnowledgeService) -> APIRouter:
     @router.post("/knowledge/cases/trust")
     async def trust_case(payload: CaseTrustRequest):
         return await knowledge_service.trust_case(payload.case_id)
+
+    @router.post("/internal/cases/retrieve")
+    async def retrieve_internal_cases(payload: CaseRetrievalRequest):
+        return await knowledge_service.retrieve_trusted_cases(payload.requirement, payload.features, payload.top_k)
+
+    @router.post("/internal/cases/capture")
+    async def capture_internal_case(payload: CandidateCaseCaptureRequest):
+        return await knowledge_service.capture_candidate_case(
+            payload.requirement,
+            payload.features,
+            payload.candidates,
+        )
+
+    @router.post("/internal/topology/retrieve")
+    async def retrieve_internal_topology(payload: TopologyKnowledgeRequest):
+        return await knowledge_service.graph_service.retrieve_topology_knowledge(payload.requirement, payload.features)
+
+    @router.post("/internal/topology/normalize")
+    async def normalize_internal_topology(payload: TopologyNormalizeRequest):
+        return await knowledge_service.graph_service.normalize_topology_patch(
+            payload.patch,
+            payload.requirement,
+            payload.features,
+            payload.graph_knowledge,
+            payload.coverage,
+        )
+
+    @router.post("/internal/topology/merge")
+    async def merge_internal_topology(payload: TopologyMergeRequest):
+        return knowledge_service.graph_service.merge_topology_patch(
+            payload.requirement,
+            payload.features,
+            payload.patch,
+        )
 
     return router

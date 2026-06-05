@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from app.agents.architecture_matcher import ArchitectureMatcherAgent
 from app.agents.evaluation_generator import EvaluationGeneratorAgent
@@ -15,10 +16,15 @@ from app.services.rule_engine import RuleEngine
 
 
 class RecommendationService:
-    def __init__(self, repository: KnowledgeRepository | None = None) -> None:
-        self.llm_client = LLMClient()
-        self.knowledge_service = KnowledgeService(self.llm_client, repository=repository)
-        self.repository = self.knowledge_service.repository
+    def __init__(
+        self,
+        repository: KnowledgeRepository | None = None,
+        knowledge_service: Any | None = None,
+        llm_client: LLMClient | None = None,
+    ) -> None:
+        self.llm_client = llm_client or LLMClient()
+        self.knowledge_service = knowledge_service or KnowledgeService(self.llm_client, repository=repository)
+        self.repository = getattr(self.knowledge_service, "repository", None)
         self.matcher = ArchitectureMatcherAgent()
         self.requirement_agent = RequirementAnalysisAgent(self.llm_client)
         self.evaluator = EvaluationGeneratorAgent(self.llm_client)

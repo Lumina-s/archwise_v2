@@ -18,3 +18,8 @@ app = FastAPI(
     version="1.0.0",
 )
 app.include_router(build_knowledge_router(knowledge_service))
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": "knowledge"}
