@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArchWise · 软件架构智能助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-aw7">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="true"></div>
+  <div id="topologyModal" class="topo-modal" aria-hidden="true">
+    <div class="topo-modal-head">
+      <strong>架构拓扑 · 大图</strong>
+      <div class="topo-modal-actions">
+        <button id="modalZoomOut" type="button" class="ghost-btn">缩小</button>
+        <button id="modalZoomReset" type="button" class="ghost-btn">适配</button>
+        <button id="modalZoomIn" type="button" class="ghost-btn">放大</button>
+        <button id="modalClose" type="button" class="ghost-btn">关闭</button>
+      </div>
+    </div>
+    <div id="topologyModalCanvas" class="topo-modal-canvas"></div>
+  </div>
+  <script src="/static/app.js?v=20260605-aw7"></script>
+</body>
+</html>
