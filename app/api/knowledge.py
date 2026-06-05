@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.models.schemas import CaseRequest, CaseTrustRequest, KnowledgeStyleRequest
+from app.models.schemas import CaseRequest, CaseTrustRequest, KnowledgeStyleRequest, ManualCaseRequest
 from app.services.knowledge_service import KnowledgeService
 
 
@@ -54,8 +54,22 @@ def build_knowledge_router(knowledge_service: KnowledgeService) -> APIRouter:
         return knowledge_service.list_cases()
 
     @router.post("/knowledge/cases")
-    async def add_case(payload: CaseRequest):
-        return await knowledge_service.add_trusted_case(payload)
+    async def add_case(payload: ManualCaseRequest):
+        case = CaseRequest(
+            title=payload.title,
+            requirement=payload.requirement,
+            expected_styles=payload.expected_styles,
+            notes=payload.notes,
+        )
+        return await knowledge_service.add_manual_case(case, status="trusted" if payload.as_trusted else "candidate")
+
+    @router.post("/knowledge/cases/check")
+    async def check_case(payload: CaseRequest):
+        return await knowledge_service.check_manual_case(payload)
+
+    @router.post("/knowledge/cases/delete")
+    async def delete_case(payload: CaseTrustRequest):
+        return await knowledge_service.delete_case(payload.case_id)
 
     @router.post("/knowledge/cases/trust")
     async def trust_case(payload: CaseTrustRequest):

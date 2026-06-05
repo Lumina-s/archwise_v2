@@ -49,6 +49,11 @@ class LangChainChromaStore:
             embeddings=vectors,
         )
 
+    async def adelete(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        await asyncio.to_thread(self.vector_store._collection.delete, ids=ids)
+
     async def asimilarity_search_by_text(
         self,
         *,

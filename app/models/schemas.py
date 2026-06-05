@@ -106,6 +106,14 @@ class CaseTrustRequest(BaseModel):
     case_id: str
 
 
+class ManualCaseRequest(BaseModel):
+    title: str = Field(..., min_length=1, description="案例标题")
+    requirement: str = Field(..., min_length=5, description="需求描述")
+    expected_styles: list[str] = Field(default_factory=list, description="期望/推荐的架构风格")
+    notes: str = ""
+    as_trusted: bool = Field(default=False, description="是否直接加为可信案例（默认仅作候选待审）")
+
+
 class EmbeddingRequest(BaseModel):
     texts: list[str] = Field(..., min_length=1, description="待向量化文本")
 

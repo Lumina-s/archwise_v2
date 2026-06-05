@@ -465,3 +465,32 @@ button:disabled { cursor: default; }
 .kg-case-req { font-size: 13px; color: var(--text-2); line-height: 1.6; }
 .kg-case-styles { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .kg-case-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.kg-case-actions { display: flex; gap: 6px; }
+.ghost-btn.danger { color: #fca5a5; border-color: rgba(239,68,68,0.3); }
+.ghost-btn.danger:hover { color: #fff; background: rgba(239,68,68,0.18); border-color: var(--red); }
+.kg-cases-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+
+/* add-case modal */
+.kg-modal-overlay {
+  position: fixed; inset: 0; z-index: 250; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(5,5,6,0.7); backdrop-filter: blur(4px); animation: fadeIn 0.2s ease;
+}
+.kg-modal {
+  width: min(560px, 100%); max-height: 90vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border-light); border-radius: 18px; box-shadow: var(--shadow);
+}
+.kg-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.kg-modal-head strong { font-size: 16px; }
+.kg-modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+.kg-modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--border); }
+.kg-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+.kg-field input, .kg-field textarea {
+  width: 100%; padding: 10px 12px; font-size: 14px; color: var(--text); font-family: var(--font);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; outline: none; resize: vertical;
+}
+.kg-field input:focus, .kg-field textarea:focus { border-color: var(--border-light); }
+.kg-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.kg-check input { width: 15px; height: 15px; accent-color: var(--accent); }
+.kg-advisory { font-size: 13px; line-height: 1.6; padding: 0; min-height: 0; }
+.kg-advisory.warn { color: var(--amber); padding: 10px 12px; background: rgba(245,158,11,0.1); border-radius: 8px; }
+.kg-advisory.info { color: var(--accent); padding: 10px 12px; background: var(--accent-dim); border-radius: 8px; }

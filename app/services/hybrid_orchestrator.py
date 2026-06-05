@@ -911,13 +911,17 @@ class HybridReasoningOrchestrator:
 
     async def _graph_case_capture(self, state: RecommendationGraphState) -> RecommendationGraphState:
         ctx = state["ctx"]
-        record = await self.knowledge_service.capture_candidate_case(
-            ctx.requirement,
-            state["features"],
-            state["candidates"],
+        # Consolidation (LLM create-or-refine) + write runs in the background so it never blocks the response.
+        task = asyncio.create_task(
+            self.knowledge_service.capture_candidate_case(
+                ctx.requirement,
+                state["features"],
+                state["candidates"],
+            )
         )
-        ctx.trace.append(f"案例记忆 Agent 已捕获候选案例：{record.id}，等待确认后进入可信检索集合")
-        return {"captured_case_id": record.id}
+        task.add_done_callback(self._consume_background_task_result)
+        ctx.trace.append("案例记忆 Agent 已将本次推荐转入后台沉淀（去重判定后写入候选集）")
+        return {"captured_case_id": ""}
 
     async def _analyze(self, ctx: ReasoningContext):
         ctx.trace.append("需求解析 Agent 接收自然语言需求")

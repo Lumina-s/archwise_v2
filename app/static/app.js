@@ -1131,11 +1131,22 @@ function renderCaseList(body, cases, filter) {
   ];
   const filtered = cases.filter((c) => (filter === "all" ? true : c.status === filter || c.source === filter));
   body.innerHTML = `
-    <div class="section-label">案例数据库</div>
-    <p class="trace-intro">系统内置案例 + 运行时学到的案例。<b>运行时 / 候选</b>就是自我进化的证据；点「提升为可信」可把候选案例纳入下次检索注入。</p>
+    <div class="kg-cases-head"><div class="section-label" style="margin:0">案例数据库</div><button class="new-btn" id="kgAddCase">+ 新增案例</button></div>
+    <p class="trace-intro">系统内置 + 运行时学到的案例。<b>运行时 / 候选</b>是自我进化的证据；「提升为可信」纳入检索注入，「删除」可清理重复或错误案例。</p>
     <div class="kg-filters">${filters.map((f) => `<button class="kg-filter ${f.key === filter ? "active" : ""}" data-filter="${f.key}">${escapeHtml(f.label)}</button>`).join("")}</div>
     <div class="kg-cases">${filtered.length ? filtered.map(caseCard).join("") : '<div class="empty-hint">该筛选下暂无案例。</div>'}</div>`;
+  document.querySelector("#kgAddCase").addEventListener("click", () => openAddCaseModal(body, filter));
   body.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => renderCaseList(body, cases, b.dataset.filter)));
+  body.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
+    if (!window.confirm("确定删除这条案例吗？此操作不可撤销。")) return;
+    b.disabled = true; b.textContent = "删除中…";
+    try {
+      await fetchJson("/api/knowledge/cases/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ case_id: b.dataset.del }) });
+      kg.cases = await fetchJson("/api/cases");
+      renderCaseList(body, kg.cases, filter);
+      showToast("已删除", "案例已从案例库移除。", "info");
+    } catch (e) { b.disabled = false; b.textContent = "删除"; showToast("删除失败", e.message); }
+  }));
   body.querySelectorAll("[data-trust]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true; b.textContent = "提升中…";
     try {
@@ -1164,9 +1175,86 @@ function caseCard(c) {
     </div>
     <div class="kg-case-foot">
       <span class="kv">置信度 ${escapeHtml(String(c.confidence ?? "—"))} · ${escapeHtml(String(c.updated_at || c.created_at || "").slice(0, 10))}</span>
-      ${trusted ? "" : `<button class="ghost-btn" data-trust="${escapeHtml(c.id)}">提升为可信</button>`}
+      <div class="kg-case-actions">
+        ${trusted ? "" : `<button class="ghost-btn" data-trust="${escapeHtml(c.id)}">提升为可信</button>`}
+        <button class="ghost-btn danger" data-del="${escapeHtml(c.id)}">删除</button>
+      </div>
     </div>
   </div>`;
+}
+
+function openAddCaseModal(body, filter) {
+  const overlay = document.createElement("div");
+  overlay.className = "kg-modal-overlay";
+  overlay.innerHTML = `
+    <div class="kg-modal">
+      <div class="kg-modal-head"><strong>新增案例</strong><button class="ghost-btn" data-close>关闭</button></div>
+      <div class="kg-modal-body">
+        <label class="kg-field"><span>标题</span><input id="acTitle" type="text" placeholder="例如：跨境电商交易中台"></label>
+        <label class="kg-field"><span>需求描述</span><textarea id="acReq" rows="4" placeholder="描述这个系统的需求、规模、并发、一致性与部署约束…"></textarea></label>
+        <label class="kg-field"><span>推荐 / 期望架构（用、或逗号分隔）</span><input id="acStyles" type="text" placeholder="微服务架构、事件驱动架构、CQRS 架构"></label>
+        <label class="kg-field"><span>备注（可选）</span><input id="acNotes" type="text" placeholder="补充说明"></label>
+        <label class="kg-check"><input id="acTrusted" type="checkbox"> 我确定，直接加为可信（默认仅作候选，需再确认才进入检索）</label>
+        <div id="acAdvisory" class="kg-advisory"></div>
+      </div>
+      <div class="kg-modal-foot">
+        <button class="ghost-btn" data-close>取消</button>
+        <button class="submit-btn" id="acSubmit" style="padding:9px 22px">检查并新增</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
+
+  const parseStyles = (s) => s.split(/[，,、]/).map((x) => x.trim()).filter(Boolean);
+  const submit = overlay.querySelector("#acSubmit");
+  const advisory = overlay.querySelector("#acAdvisory");
+  let confirmedDespiteWarning = false;
+
+  submit.addEventListener("click", async () => {
+    const title = overlay.querySelector("#acTitle").value.trim();
+    const requirement = overlay.querySelector("#acReq").value.trim();
+    const expected_styles = parseStyles(overlay.querySelector("#acStyles").value);
+    const notes = overlay.querySelector("#acNotes").value.trim();
+    const as_trusted = overlay.querySelector("#acTrusted").checked;
+    if (title.length < 1 || requirement.length < 5) {
+      advisory.className = "kg-advisory warn";
+      advisory.textContent = "请填写标题，且需求描述至少 5 个字。";
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = "检查中…";
+    try {
+      if (!confirmedDespiteWarning) {
+        const check = await fetchJson("/api/knowledge/cases/check", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, requirement, expected_styles, notes }),
+        });
+        if (check.verdict && check.verdict !== "new") {
+          advisory.className = `kg-advisory ${check.verdict === "conflict" ? "warn" : "info"}`;
+          advisory.textContent = `${check.message || "检测到相似案例。"} 仍要新增请再次点击。`;
+          confirmedDespiteWarning = true;
+          submit.disabled = false;
+          submit.textContent = "仍然新增";
+          return;
+        }
+      }
+      await fetchJson("/api/knowledge/cases", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, requirement, expected_styles, notes, as_trusted }),
+      });
+      close();
+      kg.cases = await fetchJson("/api/cases");
+      renderCaseList(body, kg.cases, filter);
+      showToast("已新增", as_trusted ? "已作为可信案例加入。" : "已作为候选案例加入，待提升为可信。", "info");
+    } catch (e) {
+      advisory.className = "kg-advisory warn";
+      advisory.textContent = `新增失败：${e.message}`;
+      submit.disabled = false;
+      submit.textContent = confirmedDespiteWarning ? "仍然新增" : "检查并新增";
+    }
+  });
 }
 
 /* ───────────── boot ───────────── */

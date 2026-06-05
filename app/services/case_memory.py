@@ -4,12 +4,24 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from app.models.schemas import CandidateEvaluation, CaseRecord, CaseRequest, ExtractedFeatures
 from app.services.langchain_chroma_store import LangChainChromaStore
 from app.services.langchain_embeddings import LLMClientEmbeddings
 from app.services.llm_client import LLMClient
+
+
+class CaseConsolidationDecision(BaseModel):
+    """LLM 对'新案例 vs 现有案例库'的去重/一致性判定（Hermes 式 create-or-refine）。"""
+
+    action: Literal["merge", "skip", "create"] = "create"
+    target_case_id: str = ""
+    merged_recommended_styles: list[str] = Field(default_factory=list)
+    conflict_with_trusted: bool = False
+    reason: str = ""
 
 
 class CaseMemoryService:
@@ -44,6 +56,10 @@ class CaseMemoryService:
         return self._load_records()
 
     async def add_trusted_case(self, case: CaseRequest) -> CaseRecord:
+        return await self.add_manual_case(case, status="trusted")
+
+    async def add_manual_case(self, case: CaseRequest, status: str = "candidate") -> CaseRecord:
+        clean_status = "trusted" if status == "trusted" else "candidate"
         now = self._now()
         record = CaseRecord(
             id=self._stable_id("manual", case.requirement),
@@ -53,14 +69,55 @@ class CaseMemoryService:
             expected_styles=case.expected_styles,
             recommended_styles=case.expected_styles,
             notes=case.notes,
-            status="trusted",
+            status=clean_status,
             source="manual",
-            confidence=1.0,
+            confidence=1.0 if clean_status == "trusted" else 0.6,
             created_at=now,
             updated_at=now,
         )
         await self._upsert_records([record])
         return record
+
+    async def check_manual_case(self, case: CaseRequest) -> dict[str, Any]:
+        """提交前的去重/矛盾提示（人工新增用，复用同一套判定，但只提示不落库）。"""
+        records = self._load_records()
+        decision = await self._consolidate_decision(
+            requirement=case.requirement,
+            recommended_styles=case.expected_styles,
+            domain="",
+            keywords=[],
+            records=records,
+        )
+        record_map = {record.id: record for record in records}
+        target = record_map.get(decision.target_case_id)
+        if decision.action == "merge" and target:
+            verdict, message = "duplicate", f"与候选案例《{target.title}》高度相似，建议改为补充/合并。"
+        elif decision.action == "skip" and target:
+            verdict, message = "duplicate", f"与可信案例《{target.title}》重复且结论一致，可不必新增。"
+        elif decision.conflict_with_trusted and target:
+            verdict, message = "conflict", f"与可信案例《{target.title}》推荐分歧（{('、'.join(target.recommended_styles)) or '—'}），请确认。"
+        else:
+            verdict, message = "new", "未发现重复或矛盾，可以新增。"
+        similar = (
+            {
+                "id": target.id,
+                "title": target.title,
+                "status": target.status,
+                "recommended_styles": target.recommended_styles or target.expected_styles,
+            }
+            if target
+            else None
+        )
+        return {"verdict": verdict, "message": message, "similar": similar, "reason": decision.reason}
+
+    async def delete_case(self, case_id: str) -> dict[str, Any]:
+        records = self._load_records()
+        if not any(record.id == case_id for record in records):
+            raise ValueError(f"案例不存在：{case_id}")
+        remaining = [record for record in records if record.id != case_id]
+        self._write_records(remaining)
+        await self.chroma_store.adelete([case_id])
+        return {"ok": True, "deleted": case_id}
 
     async def trust_case(self, case_id: str) -> CaseRecord:
         records = self._load_records()
@@ -117,23 +174,129 @@ class CaseMemoryService:
     ) -> CaseRecord:
         if not candidates:
             raise ValueError("候选架构为空，不能捕获案例。")
+        await self.bootstrap_seed_cases()
+        recommended = [candidate.name for candidate in candidates[:3]]
+        confidence = max(0.0, min(1.0, candidates[0].score / 100))
+        records = self._load_records()
+        record_map = {record.id: record for record in records}
+        decision = await self._consolidate_decision(
+            requirement=requirement,
+            recommended_styles=recommended,
+            domain=features.domain,
+            keywords=features.keywords,
+            records=records,
+        )
         now = self._now()
+
+        # skip: an existing trusted case already covers this scenario consistently
+        if decision.action == "skip" and decision.target_case_id in record_map:
+            return record_map[decision.target_case_id]
+
+        # merge: consolidate into an existing candidate (kills near-duplicate cards)
+        if decision.action == "merge" and decision.target_case_id in record_map:
+            target = record_map[decision.target_case_id]
+            merged_styles = decision.merged_recommended_styles or list(
+                dict.fromkeys([*target.recommended_styles, *recommended])
+            )
+            merged = target.model_copy(
+                update={
+                    "recommended_styles": merged_styles[:5],
+                    "confidence": max(target.confidence, confidence),
+                    "updated_at": now,
+                    "notes": "运行时自动捕获并合并相似案例，待人工确认。",
+                }
+            )
+            await self._upsert_records([merged])
+            return merged
+
+        # create (optionally flagged as diverging from a trusted precedent)
+        notes = "运行时自动捕获，待人工确认后进入可信检索集合。"
+        if decision.conflict_with_trusted and decision.target_case_id in record_map:
+            notes = f"运行时捕获：与可信案例《{record_map[decision.target_case_id].title}》推荐分歧，待人工核对。"
         record = CaseRecord(
             id=self._stable_id("runtime", requirement),
             title=f"{features.domain} 推荐案例",
             requirement=requirement,
             abstract_features=self._abstract_from_features(requirement, features),
             expected_styles=[],
-            recommended_styles=[candidate.name for candidate in candidates[:3]],
-            notes="运行时自动捕获，待人工确认后进入可信检索集合。",
+            recommended_styles=recommended,
+            notes=notes,
             status="candidate",
             source="runtime",
-            confidence=max(0.0, min(1.0, candidates[0].score / 100)),
+            confidence=confidence,
             created_at=now,
             updated_at=now,
         )
         await self._upsert_records([record])
         return record
+
+    async def _consolidate_decision(
+        self,
+        *,
+        requirement: str,
+        recommended_styles: list[str],
+        records: list[CaseRecord],
+        domain: str = "",
+        keywords: list[str] | None = None,
+    ) -> CaseConsolidationDecision:
+        """Let the LLM scan a compact index of the whole library and decide merge/skip/create."""
+        index = self._library_index(records)
+        if not index:
+            return CaseConsolidationDecision(action="create")
+        new_case = {
+            "requirement": requirement[:300],
+            "domain": domain,
+            "keywords": (keywords or [])[:10],
+            "recommended_styles": recommended_styles,
+        }
+        system_message = "你是软件架构案例库的去重与一致性 Agent，只输出 JSON。"
+        user_prompt = (
+            "判断【新案例】相对【现有案例库】应当如何处理，三选一：\n"
+            "- merge：与某条 status=candidate 的候选案例是同一场景 → 合并进它（merged_recommended_styles 给出合并后的推荐，稳定风格保留、分歧的可并列）。\n"
+            "- skip：与某条 status=trusted 的可信案例是同一场景且推荐一致 → 跳过不新增（target_case_id 填该可信案例）。\n"
+            "- create：与已有案例都不像 → 新建。若与某条 trusted 同场景但推荐明显矛盾，仍用 create 且 conflict_with_trusted=true、target_case_id 填该可信案例。\n"
+            "硬规则：绝不能 merge 进 trusted 案例（可信集合只由人工修改）。\n"
+            "只返回字段：action, target_case_id, merged_recommended_styles, conflict_with_trusted, reason。\n\n"
+            f"新案例：{json.dumps(new_case, ensure_ascii=False)}\n"
+            f"现有案例库：{json.dumps(index, ensure_ascii=False)}\n"
+        )
+        try:
+            decision = await self.llm_client._ainvoke_structured(
+                system_message=system_message,
+                user_prompt=user_prompt,
+                schema=CaseConsolidationDecision,
+                temperature=0.0,
+                max_tokens=400,
+            )
+            return self._validate_decision(decision, records)
+        except Exception:
+            return CaseConsolidationDecision(action="create", reason="去重判定不可用，降级为新建。")
+
+    @staticmethod
+    def _library_index(records: list[CaseRecord]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": record.id,
+                "status": record.status,
+                "title": record.title,
+                "summary": record.requirement[:80],
+                "recommended_styles": record.recommended_styles or record.expected_styles,
+            }
+            for record in records
+        ]
+
+    @staticmethod
+    def _validate_decision(decision: CaseConsolidationDecision, records: list[CaseRecord]) -> CaseConsolidationDecision:
+        record_map = {record.id: record for record in records}
+        if decision.action == "merge":
+            target = record_map.get(decision.target_case_id)
+            if not target or target.status != "candidate":
+                return CaseConsolidationDecision(action="create", reason="合并目标无效（非候选案例），降级为新建。")
+        elif decision.action == "skip":
+            target = record_map.get(decision.target_case_id)
+            if not target or target.status != "trusted":
+                return CaseConsolidationDecision(action="create", reason="跳过目标无效（非可信案例），降级为新建。")
+        return decision
 
     async def bootstrap_seed_cases(self) -> None:
         existing_seed_ids = {

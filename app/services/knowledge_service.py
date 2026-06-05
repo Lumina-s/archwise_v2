@@ -109,6 +109,15 @@ class KnowledgeService:
     async def add_trusted_case(self, case: CaseRequest) -> CaseRecord:
         return await self.case_memory.add_trusted_case(case)
 
+    async def add_manual_case(self, case: CaseRequest, status: str = "candidate") -> CaseRecord:
+        return await self.case_memory.add_manual_case(case, status)
+
+    async def check_manual_case(self, case: CaseRequest) -> dict[str, Any]:
+        return await self.case_memory.check_manual_case(case)
+
+    async def delete_case(self, case_id: str) -> dict[str, Any]:
+        return await self.case_memory.delete_case(case_id)
+
     async def trust_case(self, case_id: str) -> CaseRecord:
         return await self.case_memory.trust_case(case_id)
 
